@@ -72,8 +72,8 @@ class EED_Events_Archive  extends EED_Module {
 	/**
 	 * @return EED_Events_Archive
 	 */
-	public static function instance( $module_name = '' ) {
-		return parent::instance( __CLASS__ );
+	public static function instance() {
+		return parent::get_instance( __CLASS__ );
 	}
 
 
