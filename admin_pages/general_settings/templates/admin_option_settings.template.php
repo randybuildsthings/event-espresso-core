@@ -1,8 +1,8 @@
 <div class="padding">
-	
+
 	<?php do_action( 'AHEE__admin_option_settings__template__before', $template_args ); ?>
 
-	<?php /* @todo put back once we have a dashboard widget to use 
+	<?php /* @todo put back once we have a dashboard widget to use
 	<h4 class="ee-admin-settings-hdr">
 		<?php _e('WordPress Dashboard', 'event_espresso'); ?>
 	</h4>
@@ -29,16 +29,16 @@
 					<?php _e('How many days into the future?', 'event_espresso'); ?>
 				</th>
 				<td>
-					<input name="events_in_dasboard" size="5" style="width:50px;" type="text" value="<?php echo $events_in_dasboard; ?>" />
+					<input name="events_in_dashboard" size="5" style="width:50px;" type="text" value="<?php echo $events_in_dasboard; ?>" />
 				</td>
 			</tr>
 
 		</tbody>
 	</table>
-	 
-<?php * 
+
+<?php *
 	 */
-/* @todo: implement in 4.2 or whenever timezones-per-event get implemented. 
+/* @todo: implement in 4.2 or whenever timezones-per-event get implemented.
  * When implementing this, it would probably be more proper to add a filter here
  * and use it from general_settings in the caffeinated folder
 
@@ -63,59 +63,7 @@ if( defined('CAFFEINATED') && CAFFEINATED ) : ?>
 			</tr>
 		</tbody>
 	</table>
-<?php endif; */ ?>	<h4 class="ee-admin-settings-hdr">
-		<?php _e('Debug/Logging Options', 'event_espresso'); ?>
-	</h4>
-
-	<table class="form-table">
-		<tbody>
-
-			<tr>
-				<th>
-					<?php _e('Enable Full Logging', 'event_espresso'); ?>
-					<?php echo EEH_Template::get_help_tab_link('full_logging_info'); ?>
-				</th>
-				<td>
-					<?php echo EEH_Form_Fields::select_input('use_full_logging', $values, $use_full_logging ); ?>
-					<p class="description">
-						<span class="reminder-spn">
-							<?php _e('Please use caution when using this feature. These files may be publicly available.', 'event_espresso'); ?>
-						</span><br/>
-						<?php echo sprintf( __('File is available at: %s', 'event_espresso'), '<b>/wp-content/uploads/espresso/logs/</b>' ); ?>
-					</p>
-
-				</td>
-			</tr>
-
-			<tr>
-				<th>
-					<?php _e('Enable Remote Logging', 'event_espresso'); ?>
-					<?php echo EEH_Template::get_help_tab_link('remote_logging_info'); ?>
-				</th>
-				<td>
-					<?php echo EEH_Form_Fields::select_input('use_remote_logging', $values, $use_remote_logging ); ?>
-					<p class="description">
-						<?php _e('Send debugging data to the remote URL below.', 'event_espresso'); ?>
-					</p>
-				</td>
-			</tr>
-
-			<tr>
-				<th>
-					<?php _e('Remote Logging URL', 'event_espresso'); ?>
-					<?php echo EEH_Template::get_help_tab_link('remote_logging_url_info'); ?>
-				</th>
-				<td>
-					<input name="remote_logging_url" id="remote_logging_url" size="20" class="regular-text" type="text" value="<?php echo $remote_logging_url;?>" />
-					<p class="description">
-						<?php _e('Example: http://requestb.in/MY_UNIQUE_ID', 'event_espresso'); ?>
-
-					</p>
-				</td>
-			</tr>
-
-		</tbody>
-	</table>
+<?php endif; */ ?>
 
 	<h4 class="ee-admin-settings-hdr">
 		<?php _e('Promote Event Espresso', 'event_espresso'); ?> <span id="affiliate_info"><?php echo EEH_Template::get_help_tab_link('affiliate_info'); ?></span>
