@@ -41,7 +41,9 @@ class Extend_Messages_Admin_Page extends Messages_Admin_Page {
 
 	protected function _extend_page_config() {
 		$this->_admin_base_path = EE_CORE_CAF_ADMIN_EXTEND . 'messages';
-		$this->_page_routes['custom_mtps'] = '_ee_custom_messages_overview_list_table';
+		$this->_page_routes['custom_mtps'] = array(
+			'func' => '_ee_custom_messages_overview_list_table',
+			'capability' => 'ee_read_messages' );
 		$this->_page_config['custom_mtps'] = array(
 				'nav' => array(
 					'label' => __('Custom Message Templates', 'event_espresso'),
@@ -103,7 +105,7 @@ class Extend_Messages_Admin_Page extends Messages_Admin_Page {
 	 * @return string html content for the page.
 	 */
 	public function custom_mtp_create_button_column( $item, $screen_id ) {
-		if ( $screen_id !== 'espresso_messages_default' ) {
+		if ( $screen_id !== 'espresso_messages_default' || ! EE_Registry::instance()->CAP->current_user_can( 'ee_edit_messages', 'espresso_messages_add_new_message_template' ) ) {
 			return '';
 		}
 
@@ -150,16 +152,10 @@ class Extend_Messages_Admin_Page extends Messages_Admin_Page {
 				'bulk_action' => array(
 					'trash_message_template' => __('Move to Trash', 'event_espresso')
 				)
-			),
-			'all' => array(
-				'slug' => 'all',
-				'label' => __('View All Message Templates', 'event_espresso'),
-				'count' => 0,
-				'bulk_action' => array(
-					'trash_message_template' => __('Move to Trash', 'event_espresso')
-				)
-			),
-			'trashed' => array(
+			)
+		);
+		if ( EE_Registry::instance()->CAP->current_user_can( 'ee_delete_messages', 'espresso_messages_trash_message_template' ) ) {
+			$this->_views['trashed'] = array(
 				'slug' => 'trashed',
 				'label' => __('Trash', 'event_espresso'),
 				'count' => 0,
@@ -167,8 +163,8 @@ class Extend_Messages_Admin_Page extends Messages_Admin_Page {
 					'restore_message_template' => __('Restore From Trash', 'event_espresso'),
 					'delete_message_template' => __('Delete Permanently', 'event_espresso')
 				)
-			)
-		);
+			);
+		}
 	}
 
 

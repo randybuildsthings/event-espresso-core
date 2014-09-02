@@ -27,7 +27,9 @@ class EE_DMS_New_Addon_0_0_2 extends EE_Data_Migration_Script_Base{
 		parent::__construct();
 	}
 	/**
-	 * only run when New Addon is at exactly version 0.0.1
+	 * only run when New Addon is at exactly version 0.0.1.
+	 * NOTE: if at this first your addon will NOT be migrating data from pre-event-espresso-4, then
+	 * this hsoudl just return FALSE
 	 * @param type $version_string
 	 * @return boolean
 	 */
@@ -55,11 +57,16 @@ class EE_DMS_New_Addon_0_0_2 extends EE_Data_Migration_Script_Base{
 	}
 
 	public function schema_changes_before_migration() {
-		$this->_table_is_new_in_this_version('new_addon', '
+		$this->_table_is_new_in_this_version('esp_new_addon_thing', '
 			NEW_ID int(10) unsigned NOT NULL AUTO_INCREMENT,
 			NEW_name VARCHAR(10) NOT NULL,
-			EVT_ID int(10) unsigned NOT NULL,
 			PRIMARY KEY  (NEW_ID)'
+				);
+		$this->_table_is_new_in_this_version('esp_new_addon_attendee_meta', '
+			NATT_ID int(10) unsigned NOT NULL AUTO_INCREMENT,
+			ATT_ID int(10) unsigned NOT NULL,
+			ATT_foobar int(10) unsigned NOT NULL,
+			PRIMARY KEY  (NATT_ID)'
 				);
 	}
 }

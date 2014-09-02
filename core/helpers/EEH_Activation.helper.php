@@ -70,6 +70,8 @@ class EEH_Activation {
 		//also initialize payment settings, which is a side-effect of calling
 		//EEM_Gateway::load_all_gateways()
 		EEM_Gateways::instance(true)->load_all_gateways();
+
+		EE_Registry::instance()->CAP->init_caps();
 		//also, check for CAF default db content
 		do_action( 'AHEE__EEH_Activation__initialize_db_content' );
 		//also: EEM_Gateways::load_all_gateways() outputs a lot of success messages
@@ -333,6 +335,9 @@ class EEH_Activation {
 	 */
 	public static function create_table( $table_name, $sql, $engine = 'ENGINE=MyISAM ',$drop_table_if_pre_existed = false ) {
 //		echo "create table $table_name ". ($drop_table_if_pre_existed? 'but first nuke preexisting one' : 'or update it if it exstsi') . "<br>";//die;
+		if( apply_filters( 'FHEE__EEH_Activation__create_table__short_circuit', FALSE, $table_name, $sql ) ){
+			return;
+		}
 		do_action( 'AHEE_log', __FILE__, __FUNCTION__, '' );
 		if ( ! function_exists( 'dbDelta' )) {
 			require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
@@ -366,13 +371,16 @@ class EEH_Activation {
 	 * 	@param string $column_info if your SQL were 'ALTER TABLE table_name ADD price VARCHAR(10)', this would be 'VARCHAR(10)'
 	 */
 	public static function add_column_if_it_doesnt_exist($table_name,$column_name,$column_info='INT UNSIGNED NOT NULL'){
+		if( apply_filters( 'FHEE__EEH_Activation__add_column_if_it_doesnt_exist__short_circuit', FALSE ) ){
+			return;
+		}
 		global $wpdb;
 		$full_table_name=$wpdb->prefix.$table_name;
 		$fields = self::get_fields_on_table($table_name);
 		if (!in_array($column_name, $fields)){
 			$alter_query="ALTER TABLE $full_table_name ADD $column_name $column_info";
 			//echo "alter query:$alter_query";
-			return mysql_query($alter_query);
+			return $wpdb->query($alter_query);
 		}
 		return true;
 	}
@@ -393,12 +401,11 @@ class EEH_Activation {
 		global $wpdb;
 		$table_name=$wpdb->prefix.$table_name;
 		if ( ! empty( $table_name )) {
-			if (($tablefields = mysql_list_fields(DB_NAME, $table_name, $wpdb -> dbh)) !== FALSE) {
-				$columns = mysql_num_fields($tablefields);
+			$columns = $wpdb->get_results("SHOW COLUMNS FROM $table_name ");
+			if ($columns !== FALSE) {
 				$field_array = array();
-				for ($i = 0; $i < $columns; $i++) {
-					$fieldname = mysql_field_name($tablefields, $i);
-					$field_array[] = $fieldname;
+				foreach($columns as $column ){
+					$field_array[] = $column->Field;;
 				}
 				return $field_array;
 			}
@@ -430,6 +437,9 @@ class EEH_Activation {
 	 * 	@return void
 	 */
 	public static function drop_index( $table_name, $index_name ) {
+		if( apply_filters( 'FHEE__EEH_Activation__drop_index__short_circuit', FALSE ) ){
+			return;
+		}
 		global $wpdb;
 		$table_name_with_prefix = $wpdb->prefix . $table_name ;
 		$index_exists_query = "SHOW INDEX FROM $table_name_with_prefix WHERE Key_name = '$index_name'";
@@ -1114,18 +1124,16 @@ class EEH_Activation {
 		$undeleted_options = array();
 		foreach ( $wp_options_to_delete as $option_name => $no_wildcard ) {
 
-			$option_name = $no_wildcard ? "= '$option_name'" : "LIKE '%$option_name%'";
-
-			if ( $option_id = $wpdb->query( "SELECT option_id FROM $wpdb->options WHERE option_name $option_name" )) {
-				switch ( $wpdb->query( "DELETE FROM $wpdb->options WHERE option_name $option_name" )) {
-					case FALSE :
-						$undeleted_options[] = $option_name;
-					break;
-					case 0 :
-	//					echo '<h4 style="color:red;">the option : ' . $option_name . ' was not deleted  <br /></h4>';
-					break;
-					default:
-	//					echo '<h4>the option : ' . $option_name . ' was deleted successully <br /></h4>';
+			if( $no_wildcard ){
+				if( ! delete_option( $option_name ) ){
+					$undeleted_options[] = $option_name;
+				}
+			}else{
+				$option_names_to_delete_from_wildcard = $wpdb->get_col( "SELECT option_name FROM $wpdb->options WHERE option_name LIKE '%$option_name%'" );
+				foreach($option_names_to_delete_from_wildcard as $option_name_from_wildcard ){
+					if( ! delete_option( $option_name_from_wildcard ) ){
+						$undeleted_options[] = $option_name_from_wildcard;
+					}
 				}
 			}
 		}
@@ -1158,7 +1166,7 @@ class EEH_Activation {
 
 		}
 		if ( $errors != '' ) {
-			echo $errors;
+			EE_Error::add_attention( $errors, __FILE__, __FUNCTION__, __LINE__ );
 		}
 	}
 

@@ -28,10 +28,17 @@ class EE_UnitTestCase extends WP_UnitTestCase {
 	const error_code_undefined_property = 8;
 	protected $_cached_SERVER_NAME = NULL;
 
+	/**
+	 * Boolean indicating we've already noted an accidental txn commit and we don't need to
+	 * keep checking or warning the test runner about it
+	 * @var boolean
+	 */
+	static $accidental_txn_commit_noted = FALSE;
+
 	public function setUp() {
 		//save the hooks state before WP_UnitTestCase actually gets its hands on it...
 		//as it immediately adds a few hooks we might not want to backup
-		global $auto_made_thing_seed, $wp_filter, $wp_actions, $merged_filters, $wp_current_filter;
+		global $auto_made_thing_seed, $wp_filter, $wp_actions, $merged_filters, $wp_current_filter, $wpdb;
 		$this->wp_filters_saved = array(
 			'wp_filter'=>$wp_filter,
 			'wp_actions'=>$wp_actions,
@@ -40,15 +47,34 @@ class EE_UnitTestCase extends WP_UnitTestCase {
 		);
 		parent::setUp();
 		$auto_made_thing_seed = 1;
+		//reset wpdb's list of queries executed so it only stores those from the current test
+		$wpdb->queries = array();
+		//the accidental txn commit indicator option shouldnt' be set from the previous test
+		update_option( 'accidental_txn_commit_indicator', TRUE );
 
 //		$this->wp_actions_saved = $wp_actions;
 		// Fake WP mail globals, to avoid errors
 		add_filter( 'wp_mail', array( $this, 'setUp_wp_mail' ) );
 		add_filter( 'wp_mail_from', array( $this, 'tearDown_wp_mail' ) );
+		add_filter( 'FHEE__EEH_Activation__create_table__short_circuit', '__return_true' );
+		add_filter( 'FHEE__EEH_Activation__add_column_if_it_doesnt_exist__short_circuit', '__return_true' );
+		add_filter( 'FHEE__EEH_Activation__drop_index__short_circuit', '__return_true' );
 
 		//factor
 		$this->factory = new EE_UnitTest_Factory;
 
+	}
+
+	public function _short_circuit_db_implicit_commits( $short_circuit = FALSE, $table_name, $sql ){
+		$whitelisted_tables = apply_filters('FHEE__EE_UnitTestCase__short_circuit_db_implicit_commits__whitelisted_tables', array() );
+		if( in_array( $table_name, $whitelisted_tables ) ){
+//			echo "\r\n\r\nDONT shortcircuit $sql";
+			//it's not altering. it's ok
+			return FALSE;
+		}else{
+//			echo "3\r\n\r\nshort circuit:$sql";
+			return TRUE;
+		}
 	}
 
 	public function tearDown(){
@@ -59,6 +85,19 @@ class EE_UnitTestCase extends WP_UnitTestCase {
 		$merged_filters = $this->wp_filters_saved[ 'merged_filters' ];
 		$wp_current_filter = $this->wp_filters_saved[ 'wp_current_filter' ];
 	}
+
+	protected function _detect_accidental_txn_commit(){
+		//for some reason WP waits until the start of the next test to do this. but
+		//we prefer to do it now so taht we can check for implicit commits
+		$this->clean_up_global_scope();
+		//now we can check if there was an accidental implicit commit
+		if( ! self::$accidental_txn_commit_noted && get_option( 'accidental_txn_commit_indicator', FALSE ) ){
+			global $wpdb;
+			self::$accidental_txn_commit_noted = TRUE;
+			throw new EE_Error(sprintf( __( "Accidental MySQL Commit was issued sometime during the previous test. This means we couldnt properly restore database to its pre-test state. If this doesnt create problems now it probably will later! Read up on MySQL commits, especially Implicit Commits. Queries executed were: \r\n%s", 'event_espresso' ),print_r( $wpdb->queries, TRUE) ) );
+		}
+	}
+
 
 	/**
 	 *  Use this to clean up any global scope singletons etc that we may have being used by EE so
@@ -265,6 +304,30 @@ class EE_UnitTestCase extends WP_UnitTestCase {
 		}
 	}
 
+	/**
+	 * COmpares two EE model objects by just looking at their field's values. If you want strict comparison just use ordinary '==='.
+	 * If you pass it two arrays of EE objects, that works too
+	 * @param EE_Base_Class|EE_Base_Class[] $expected_object
+	 * @param EE_Base_Class|EE_Base_Class[] $actual_object
+	 */
+	public function assertEEModelObjectsEquals( $expected_object, $actual_object){
+		if( is_array( $expected_object ) ){
+			$this->assertTrue( is_array( $actual_object ) );
+			foreach( $expected_object as $single_expected_object ){
+				$this->assertEEModelObjectsEquals( $single_expected_object, array_shift( $actual_object ) );
+			}
+		}else{
+			$this->assertInstanceOf( 'EE_Base_Class', $expected_object);
+			$this->assertInstanceOf( 'EE_Base_Class', $actual_object);
+			$this->assertEquals( get_class( $expected_object ), get_class( $actual_object ) );
+			foreach( $expected_object->model_field_array() as $field_name => $expected_value ){
+				$actual_value = $actual_object->get( $field_name );
+				if( $expected_value != $actual_value ){
+					$this->fail( sprintf( __( 'EE objects of class "%s" did not match. They were: \r\n%s and \r\n%s', 'event_espresso' ), json_encode( $expected_object->model_field_array() ), json_encode( $actual_object->model_field_array() ) ) );
+				}
+			}
+		}
+	}
 
 
 	/**
@@ -338,18 +401,50 @@ class EE_UnitTestCase extends WP_UnitTestCase {
 	/**
 	 * We really should implement this function in the proper PHPunit style
 	 * @see http://php-and-symfony.matthiasnoback.nl/2012/02/phpunit-writing-a-custom-assertion/
+	 * !NOTE! This ONLY checks for non-temporary tables! And WP_UnitTestCase changes all queries that use
+	 * 'CREATE TABLE' to 'CREATE TEMPORARY TABLE'. See http://wordpress.stackexchange.com/questions/94954/plugin-development-with-unit-tests
+	 * So you need to remove that filter BEFORE the table is created if you subsequently want to check
+	 * whether the table exists or not; or alternatively somehow improve this to check for temporary tables...
+	 * but that's unfortunately very difficult with MYSQL
 	 * @global WPDB $wpdb
 	 * @param string $table_name with or without $wpdb->prefix
 	 * @param string $model_name the model's name (only used for error reporting)
 	 */
-	function assertTableExists($table_name,$model_name = 'Unknown'){
-		global $wpdb;
+	function assertTableExists($table_name,$model_name = 'Unknown') {
+		if( ! $this->_table_exists( $table_name) ){
+			global $wpdb;
+			$this->fail( $wpdb->last_error);
+		}
+	}
+
+	/**
+	 * Returns whether or not hte table exists
+	 * @global WPDB $wpdb
+	 * @param string $table_name
+	 * @param type $model_name
+	 * @return boolean whether the table exists or not. If you want to get the error
+	 * regarding the table's existence, you can use $wpdb->last_error
+	 */
+	protected function _table_exists( $table_name ){
+		global $wpdb, $EZSQL_ERROR;
 		if(strpos($table_name, $wpdb->prefix) !== 0){
 			$table_name = $wpdb->prefix.$table_name;
 		}
-		$exists =  $wpdb->get_var( "SHOW TABLES LIKE '$table_name'" ) == $table_name;
-		if( !$exists ){
-			$this->assertTrue($exists,  sprintf(__("Table like %s does not exist as it was defined on the model %s", 'event_espresso'),$table_name,$model_name));
+		//ignore if this causes an sql error
+		$old_error = $wpdb->last_error;
+		$old_suppress_errors = $wpdb->suppress_errors();
+		$old_show_errors_value = $wpdb->show_errors( FALSE );
+		$ezsql_error_cache = $EZSQL_ERROR;
+		$wpdb->get_results( "SELECT * from $table_name LIMIT 1");
+		$wpdb->show_errors( $old_show_errors_value );
+		$wpdb->suppress_errors( $old_suppress_errors );
+		$new_error = $wpdb->last_error;
+		$wpdb->last_error = $old_error;
+		$EZSQL_ERROR = $ezsql_error_cache;
+		if( empty( $new_error ) ){
+			return TRUE;
+		}else{
+			return FALSE;
 		}
 	}
 
@@ -361,13 +456,8 @@ class EE_UnitTestCase extends WP_UnitTestCase {
 	 * @param string $model_name the model's name (only used for error reporting)
 	 */
 	function assertTableDoesNotExist($table_name, $model_name = 'Unknown' ){
-		global $wpdb;
-		if(strpos($table_name, $wpdb->prefix) !== 0){
-			$table_name = $wpdb->prefix.$table_name;
-		}
-		$exists =  $wpdb->get_var( "SHOW TABLES LIKE '$table_name'" ) == $table_name;
-		if( $exists ){
-			$this->assertFalse($exists,  sprintf(__("Table like %s SHOULD NOT exist. It was apparently defined on the model '%s'", 'event_espresso'),$table_name,$model_name));
+		if( $this->_table_exists( $table_name ) ){
+			$this->fail( sprintf(__("Table like %s SHOULD NOT exist. It was apparently defined on the model '%s'", 'event_espresso'),$table_name,$model_name));
 		}
 	}
 
@@ -380,6 +470,8 @@ class EE_UnitTestCase extends WP_UnitTestCase {
 	protected function _pretend_addon_hook_time(){
 		global $wp_actions;
 		unset($wp_actions['AHEE__EE_System___detect_if_activation_or_upgrade__begin']);
+		unset($wp_actions['FHEE__EE_System__parse_model_names']);
+		unset($wp_actions['FHEE__EE_System__parse_implemented_model_names']);
 		$wp_actions['AHEE__EE_System__load_espresso_addons'] = 1;
 	}
 	/**
@@ -390,9 +482,89 @@ class EE_UnitTestCase extends WP_UnitTestCase {
 	protected function _stop_pretending_addon_hook_time(){
 		global $wp_actions;
 		$wp_actions['AHEE__EE_System___detect_if_activation_or_upgrade__begin'] = 1;
+		$wp_actions['FHEE__EE_System__parse_model_names'] = 1;
+		$wp_actions['FHEE__EE_System__parse_implemented_model_names'] = 1;
 		unset($wp_actions['AHEE__EE_System__load_espresso_addons']);
 	}
 
+	/**
+	 * Makes a complete transaction record with all associated data (ie, its line items,
+	 * registrations, tickets, datetimes, events, attendees, questions, answers, etc).
+	 * Resets EE_Cart in the process though, FYI
+	 * @param type $options
+	 * @return EE_Transaction
+	 */
+	protected function new_typical_transaction($options = array()){
+		EE_Registry::instance()->load_helper( 'Line_Item' );
+		$txn = $this->new_model_obj_with_dependencies( 'Transaction' );
+		$total_line_item = EEH_Line_Item::create_default_total_line_item( $txn->ID() );
+		$total_line_item->save_this_and_descendants_to_txn( $txn->ID() );
+		if( isset( $options[ 'ticket_types' ] ) ){
+			$ticket_types = $options[ 'ticket_types' ];
+		}else{
+			$ticket_types = 1;
+		}
+		$taxes = EEM_Price::instance()->get_all_prices_that_are_taxes();
+		for( $i = 1; $i <= $ticket_types; $i++ ){
+			$ticket = $this->new_model_obj_with_dependencies( 'Ticket', array( 'TKT_price'=> $i * 10 , 'TKT_taxable' => TRUE ) );
+			$this->assertInstanceOf( 'EE_Line_Item', EEH_Line_Item::add_ticket_purchase($total_line_item, $ticket) );
+			$reg_final_price = $ticket->price();
+			foreach($taxes as $priority => $taxes_at_priority){
+				foreach($taxes_at_priority as $tax){
+					$reg_final_price += $reg_final_price * $tax->amount() / 100;
+				}
+			}
+			$this->new_model_obj_with_dependencies( 'Registration', array('TXN_ID' => $txn->ID(), 'TKT_ID' => $ticket->ID(), 'REG_count'=>1, 'REG_group_size'=>1, 'REG_final_price' => $reg_final_price ) );
+		}
+		$txn->set_total( $total_line_item->total() );
+		$txn->save();
 
+		return $txn;
+	}
 
+	/**
+	 * Creates an interesting ticket, with a base price, dollar surcharge, and a percent surcharge,
+	 * which is for 2 different datetimes.
+	 * @param array $options {
+	 *	@type int $dollar_surcharge the dollar surcharge to add to thsi ticket
+	 *	@type int $percent_surcharge teh percent surcharge to add to this ticket (value in percent, not in decimal. Eg if it's a 10% surcharge, enter 10.00, not 0.10
+	 *	@type int $datetimes the number of datetimes for this ticket
+	 * }
+	 * @return EE_Ticket
+	 */
+	public function new_ticket( $options = array() ) {
+		$ticket = $this->new_model_obj_with_dependencies('Ticket', array( 'TKT_price' => '16.5', 'TKT_taxable' => TRUE ) );
+		$base_price_type = EEM_Price_Type::instance()->get_one( array( array('PRT_name' => 'Base Price' ) ) );
+		$this->assertInstanceOf( 'EE_Price_Type', $base_price_type );
+		$base_price = $this->new_model_obj_with_dependencies( 'Price', array( 'PRC_amount' => 10, 'PRT_ID' => $base_price_type->ID() ) );
+		$ticket->_add_relation_to( $base_price, 'Price' );
+		$this->assertArrayContains( $base_price, $ticket->prices() );
+		if( isset( $options[ 'dollar_surcharge'] ) ){
+			$dollar_surcharge_price_type = EEM_Price_Type::instance()->get_one( array( array( 'PRT_name' => 'Dollar Surcharge' ) ) );
+			$this->assertInstanceOf( 'EE_Price_Type', $dollar_surcharge_price_type );
+			$dollar_surcharge = $this->new_model_obj_with_dependencies( 'Price', array( 'PRC_amount' => $options[ 'dollar_surcharge'], 'PRT_ID' => $dollar_surcharge_price_type->ID() ) );
+			$ticket->_add_relation_to( $dollar_surcharge, 'Price' );
+			$this->assertArrayContains( $dollar_surcharge, $ticket->prices() );
+		}
+		if( isset( $options[ 'percent_surcharge' ] ) ){
+			$percent_surcharge_price_type = EEM_Price_Type::instance()->get_one( array( array( 'PRT_name' => 'Percent Surcharge' ) ) );
+			$this->assertInstanceOf( 'EE_Price_Type', $percent_surcharge_price_type );
+			$percent_surcharge = $this->new_model_obj_with_dependencies( 'Price', array( 'PRC_amount' => $options[ 'percent_surcharge' ], 'PRT_ID' => $percent_surcharge_price_type->ID() ) );
+			$ticket->_add_relation_to( $percent_surcharge, 'Price' );
+			$this->assertArrayContains( $percent_surcharge, $ticket->prices() );
+		}
+		if( isset( $options[ 'datetimes'] ) ){
+			$datetimes = $options[ 'datetimes' ];
+		}else{
+			$datetimes = 1;
+		}
+
+		$event = $this->new_model_obj_with_dependencies( 'Event' );
+		for( $i = 0; $i <= $datetimes; $i++ ){
+			$ddt = $this->new_model_obj_with_dependencies( 'Datetime', array( 'EVT_ID'=> $event->ID() ) );
+			$ticket->_add_relation_to( $ddt, 'Datetime' );
+			$this->assertArrayContains( $ddt, $ticket->datetimes() );
+		}
+		return $ticket;
+	}
 }
