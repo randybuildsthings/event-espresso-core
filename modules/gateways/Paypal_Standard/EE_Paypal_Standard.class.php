@@ -365,20 +365,19 @@ Class EE_Paypal_Standard extends EE_Offsite_Gateway {
 			foreach($total_line_item->get_items() as $line_item){
 				$this->addField('item_name_' . $item_num,
 						substr(
-								rawurlencode(
-										sprintf(
+								sprintf(
 										__( '%s for %s', 'event_espresso' ),
 										$line_item->name() ,
 										$line_item->ticket_event_name() ),
 								0,
-								127 ) ) );
+								127 ) );
 				$this->addField('amount_' . $item_num, $line_item->unit_price());
 				$this->addField('quantity_' . $item_num, $line_item->quantity());
 				$item_num++;
 			}
 
 			foreach ($total_line_item->tax_descendants() as  $tax_line_item) {
-				$this->addField('item_name_' . $item_num, substr( rawurlencode( $tax_line_item->name(), 0, 127 ) ) );
+				$this->addField('item_name_' . $item_num, substr($tax_line_item->name(),0,127));
 				$this->addField('amount_' . $item_num, $tax_line_item->total());
 				$this->addField('quantity_' . $item_num, '1');
 				$item_num++;
@@ -397,7 +396,7 @@ Class EE_Paypal_Standard extends EE_Offsite_Gateway {
 			$this->addField('item_name_'.$item_num,  sprintf(__("Amount owing for registration %s", 'event_espresso'),$primary_registrant->reg_code()));
 			$this->addField('amount_'.$item_num,$total_to_pay);
 			$this->addField('on0_'.$item_num,  __("Amount Owing:", 'event_espresso'));
-			$this->addField('os0_'.$item_num, rawurlencode( $description ) );
+			$this->addField('os0_'.$item_num,  $description);
 			$item_num++;
 		}
 
