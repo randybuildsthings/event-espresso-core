@@ -24,6 +24,9 @@
 class EEH_Activation {
 
 
+	private static $_default_creator_id = null;
+
+
 	/**
 	 * 	system_initialization
 	 * 	ensures the EE configuration settings are loaded with at least default options set
@@ -42,10 +45,12 @@ class EEH_Activation {
 	/**
 	 * Sets the database schema and creates folders. This should
 	 * be called on plugin activation and reactivation
+	 * @return boolean success, whether the database and folders are setup properly
 	 */
 	public static function initialize_db_and_folders(){
-		EEH_Activation::create_upload_directories();
-		EEH_Activation::create_database_tables();
+		$good_filesystem = EEH_Activation::create_upload_directories();
+		$good_db = EEH_Activation::create_database_tables();
+		return $good_filesystem && $good_db;
 	}
 
 	/**
@@ -59,8 +64,10 @@ class EEH_Activation {
 		EEH_Activation::insert_default_status_codes();
 		EEH_Activation::generate_default_message_templates();
 		EEH_Activation::create_no_ticket_prices_array();
-		//also initialize payment settings, which is a side-effect of calling
 		EE_Registry::instance()->CAP->init_caps();
+
+		EEH_Activation::validate_messages_system();
+		EEH_Activation::insert_default_payment_methods();
 		//also, check for CAF default db content
 		do_action( 'AHEE__EEH_Activation__initialize_db_content' );
 		//also: EEM_Gateways::load_all_gateways() outputs a lot of success messages
@@ -315,6 +322,11 @@ class EEH_Activation {
 	 */
 	public static function get_default_creator_id() {
 		global $wpdb;
+
+		if ( ! empty( self::$_default_creator_id ) ) {
+			return self::$_default_creator_id;
+		}/**/
+
 		$role_to_check = apply_filters( 'FHEE__EEH_Activation__get_default_creator_id__role_to_check', 'administrator' );
 
 		//let's allow pre_filtering for early exits by altenative methods for getting id.  We check for truthy result and if so then exit early.
@@ -324,11 +336,12 @@ class EEH_Activation {
 		}
 
 		$capabilities_key = $wpdb->prefix . 'capabilities';
-		$query = $wpdb->prepare( "SELECT user_id FROM $wpdb->usermeta WHERE meta_key = '$capabilities_key' AND meta_value LIKE %s ORDER BY user_id DESC LIMIT 1, 1", '%' . $role_to_check . '%' );
+		$query = $wpdb->prepare( "SELECT user_id FROM $wpdb->usermeta WHERE meta_key = '$capabilities_key' AND meta_value LIKE %s ORDER BY user_id ASC LIMIT 0,1", '%' . $role_to_check . '%' );
 		$user_id = $wpdb->get_var( $query );
 		 $user_id = apply_filters( 'FHEE__EEH_Activation_Helper__get_default_creator_id__user_id', $user_id );
 		 if ( $user_id && intval( $user_id ) ) {
-		 	return intval( $user_id );
+		 	self::$_default_creator_id =  intval( $user_id );
+		 	return self::$_default_creator_id;
 		 } else {
 		 	return NULL;
 		 }
@@ -352,6 +365,7 @@ class EEH_Activation {
 	 * leave as FALSE when you just want to verify the table exists and matches this definition (and if it
 	 * HAS data in it you want to leave it be)
 	 * 	@return void
+	 * @throws EE_Error if there are database errors
 	 */
 	public static function create_table( $table_name, $sql, $engine = 'ENGINE=MyISAM ',$drop_table_if_pre_existed = false ) {
 //		echo "create table $table_name ". ($drop_table_if_pre_existed? 'but first nuke preexisting one' : 'or update it if it exists') . "<br>";//die;
@@ -381,10 +395,19 @@ class EEH_Activation {
 			}
 		}
 		$SQL = "CREATE TABLE $wp_table_name ( $sql ) $engine DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;";
+		//get $wpdb to echo errors, but buffer them. This way at least WE know an error
+		//happened. And then we can choose to tell the end user
+		$old_show_errors_policy = $wpdb->show_errors( TRUE );
+		$old_error_supression_policy = $wpdb->suppress_errors( FALSE );
+		ob_start();
 		dbDelta( $SQL );
-		// clear any of these out
-		delete_option( $table_name . '_tbl_version' );
-		delete_option( $table_name . '_tbl' );
+		$output = ob_get_contents();
+		ob_end_clean();
+		$wpdb->show_errors( $old_show_errors_policy );
+		$wpdb->suppress_errors( $old_error_supression_policy );
+		if( ! empty( $output ) ){
+			throw new EE_Error( $output	);
+		}
 	}
 
 
@@ -494,7 +517,7 @@ class EEH_Activation {
 	 * @access public
 	 * @static
 	 * @throws EE_Error
-	 * @return void
+	 * @return boolean success (whether database is setup properly or not)
 	 */
 	public static function create_database_tables() {
 		EE_Registry::instance()->load_core( 'Data_Migration_Manager' );
@@ -505,9 +528,20 @@ class EEH_Activation {
 			$current_data_migration_script->set_migrating( FALSE );
 			$current_data_migration_script->schema_changes_before_migration();
 			$current_data_migration_script->schema_changes_after_migration();
+			if( $current_data_migration_script->get_errors() ){
+				if( WP_DEBUG ){
+					foreach( $current_data_migration_script->get_errors() as $error ){
+						EE_Error::add_error($error, __FILE__, __FUNCTION__, __LINE__ );
+					}
+				}else{
+					EE_Error::add_error( __( 'There were errors creating the Event Espresso database tables and Event Espresso has been deactivated. To view the errors, please enable WP_DEBUG in your wp-config.php file.', 'event_espresso' ) );
+				}
+				return FALSE;
+			}
 			EE_Data_Migration_Manager::instance()->update_current_database_state_to();
 		}else{
-			throw new EE_Error( __( 'Could not determine most up-to-date data migration script from which to pull database schema structure. So database is probably not setup properly', 'event_espresso' ));
+			EE_Error::add_error( __( 'Could not determine most up-to-date data migration script from which to pull database schema structure. So database is probably not setup properly', 'event_espresso' ), __FILE__, __FUNCTION__, __LINE__);
+			return FALSE;
 		}
 	}
 
@@ -622,7 +656,7 @@ class EEH_Activation {
 									'QST_required_text' => __( 'This field is required', 'event_espresso' ),
 									'QST_order' => 1,
 									'QST_admin_only' => 0,
-									'QST_wp_user' => 1,
+									'QST_wp_user' => self::get_default_creator_id(),
 									'QST_deleted' => 0
 								);
 						break;
@@ -637,7 +671,7 @@ class EEH_Activation {
 									'QST_required_text' => __( 'This field is required', 'event_espresso' ),
 									'QST_order' => 2,
 									'QST_admin_only' => 0,
-									'QST_wp_user' => 1,
+									'QST_wp_user' => self::get_default_creator_id(),
 									'QST_deleted' => 0
 								);
 						break;
@@ -652,7 +686,7 @@ class EEH_Activation {
 									'QST_required_text' => __( 'This field is required', 'event_espresso' ),
 									'QST_order' => 3,
 									'QST_admin_only' => 0,
-									'QST_wp_user' => 1,
+									'QST_wp_user' => self::get_default_creator_id(),
 									'QST_deleted' => 0
 								);
 						break;
@@ -667,7 +701,7 @@ class EEH_Activation {
 									'QST_required_text' => __( 'This field is required', 'event_espresso' ),
 									'QST_order' => 4,
 									'QST_admin_only' => 0,
-									'QST_wp_user' => 1,
+									'QST_wp_user' => self::get_default_creator_id(),
 									'QST_deleted' => 0
 								);
 						break;
@@ -682,7 +716,7 @@ class EEH_Activation {
 									'QST_required_text' => __( 'This field is required', 'event_espresso' ),
 									'QST_order' => 5,
 									'QST_admin_only' => 0,
-									'QST_wp_user' => 1,
+									'QST_wp_user' => self::get_default_creator_id(),
 									'QST_deleted' => 0
 								);
 						break;
@@ -697,7 +731,7 @@ class EEH_Activation {
 									'QST_required_text' => __( 'This field is required', 'event_espresso' ),
 									'QST_order' => 6,
 									'QST_admin_only' => 0,
-									'QST_wp_user' => 1,
+									'QST_wp_user' => self::get_default_creator_id(),
 									'QST_deleted' => 0
 								);
 						break;
@@ -707,12 +741,12 @@ class EEH_Activation {
 									'QST_display_text' => __( 'State/Province', 'event_espresso' ),
 									'QST_admin_label' => __( 'State/Province - System Question', 'event_espresso' ),
 									'QST_system' => 'state',
-									'QST_type' => 'TEXT',
+									'QST_type' => 'STATE',
 									'QST_required' => 0,
 									'QST_required_text' => __( 'This field is required', 'event_espresso' ),
 									'QST_order' => 7,
 									'QST_admin_only' => 0,
-									'QST_wp_user' => 1,
+									'QST_wp_user' => self::get_default_creator_id(),
 									'QST_deleted' => 0
 								);
 						break;
@@ -722,12 +756,12 @@ class EEH_Activation {
 									'QST_display_text' => __( 'Country', 'event_espresso' ),
 									'QST_admin_label' => __( 'Country - System Question', 'event_espresso' ),
 									'QST_system' => 'country',
-									'QST_type' => 'TEXT',
+									'QST_type' => 'COUNTRY',
 									'QST_required' => 0,
 									'QST_required_text' => __( 'This field is required', 'event_espresso' ),
 									'QST_order' => 8,
 									'QST_admin_only' => 0,
-									'QST_wp_user' => 1,
+									'QST_wp_user' => self::get_default_creator_id(),
 									'QST_deleted' => 0
 								);
 						break;
@@ -742,7 +776,7 @@ class EEH_Activation {
 									'QST_required_text' => __( 'This field is required', 'event_espresso' ),
 									'QST_order' => 9,
 									'QST_admin_only' => 0,
-									'QST_wp_user' => 1,
+									'QST_wp_user' => self::get_default_creator_id(),
 									'QST_deleted' => 0
 								);
 						break;
@@ -757,7 +791,7 @@ class EEH_Activation {
 									'QST_required_text' => __( 'This field is required', 'event_espresso' ),
 									'QST_order' => 10,
 									'QST_admin_only' => 0,
-									'QST_wp_user' => 1,
+									'QST_wp_user' => self::get_default_creator_id(),
 									'QST_deleted' => 0
 								);
 						break;
@@ -786,17 +820,16 @@ class EEH_Activation {
 
 	}
 
-
-
-
-
-
-
-
-
-
-
-
+	/**
+	 * Makes sure the default payment method (Invoice) is active.
+	 * This used to be done automatically as part of constructing the old gateways config
+	 */
+	public static function insert_default_payment_methods(){
+		if( ! EEM_Payment_Method::instance()->count_active( EEM_Payment_Method::scope_cart ) ){
+			EE_Registry::instance()->load_lib( 'Payment_Method_Manager' );
+			EE_Payment_Method_Manager::instance()->activate_a_payment_method_of_type( 'Invoice' );
+		}
+	}
 
 	/**
 	 * insert_default_status_codes
@@ -811,7 +844,7 @@ class EEH_Activation {
 
 		if ( EEH_Activation::table_exists( EEM_Status::instance()->table() ) ) {
 
-			$SQL = "DELETE FROM " . EEM_Status::instance()->table() . " WHERE STS_ID IN ( 'ACT', 'NAC', 'NOP', 'OPN', 'CLS', 'PND', 'ONG', 'SEC', 'DRF', 'DEL', 'DEN', 'EXP', 'RPP', 'RCN', 'RDC', 'RAP', 'RNA', 'TIN', 'TFL', 'TCM', 'TOP', 'PAP', 'PCN', 'PFL', 'PDC', 'EDR', 'ESN', 'PPN', 'MSN', 'MFL', 'MID', 'MRT' );";
+			$SQL = "DELETE FROM " . EEM_Status::instance()->table() . " WHERE STS_ID IN ( 'ACT', 'NAC', 'NOP', 'OPN', 'CLS', 'PND', 'ONG', 'SEC', 'DRF', 'DEL', 'DEN', 'EXP', 'RPP', 'RCN', 'RDC', 'RAP', 'RNA', 'TIN', 'TFL', 'TCM', 'TOP', 'PAP', 'PCN', 'PFL', 'PDC', 'EDR', 'ESN', 'PPN' );";
 			$wpdb->query($SQL);
 
 			$SQL = "INSERT INTO " . EEM_Status::instance()->table() . "
@@ -843,11 +876,7 @@ class EEH_Activation {
 					('PFL', 'FAILED', 'payment', 0, NULL, 0),
 					('PDC', 'DECLINED', 'payment', 0, NULL, 0),
 					('EDR', 'DRAFT', 'email', 0, NULL, 0),
-					('ESN', 'SENT', 'email', 0, NULL, 1),
-					('MSN', 'SENT', 'message', 0, NULL, 0),
-					('MFL', 'FAIL', 'message', 0, NULL, 1),
-					('MID', 'IDLE', 'message', 0, NULL, 1),
-					('MRT', 'RETRY', 'message', 0, NULL, 0);";
+					('ESN', 'SENT', 'email', 0, NULL, 1);";
 			$wpdb->query($SQL);
 
 		}
@@ -872,7 +901,7 @@ class EEH_Activation {
 	 *
 	 * 	@access public
 	 * 	@static
-	 * 	@return void
+	 * 	@return boolean success of verifying upload directories exist
 	 */
 	public static function create_upload_directories() {
 		EE_Registry::instance()->load_helper( 'File' );
@@ -898,9 +927,10 @@ class EEH_Activation {
 					),
 					__FILE__, __FUNCTION__, __LINE__
 				);
-				return;
+				return FALSE;
 			}
 		}
+		return TRUE;
 	}
 
 
@@ -1092,6 +1122,7 @@ class EEH_Activation {
 
 		//all done! let's update the active_messengers.
 		EEH_MSG_Template::update_active_messengers_in_db( $active_messengers );
+		do_action( 'AHEE__EEH_Activation__validate_messages_system' );
 		return;
 	}
 
@@ -1299,6 +1330,12 @@ class EEH_Activation {
 		}
 	}
 
+	/**
+	 * Resets the cache on EEH_Activation
+	 */
+	public static function reset(){
+		self::$_default_creator_id = NULL;
+	}
 }
 // End of file EEH_Activation.helper.php
 // Location: /helpers/EEH_Activation.core.php

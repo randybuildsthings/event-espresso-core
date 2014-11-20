@@ -219,7 +219,6 @@ class Payments_Admin_Page extends EE_Admin_Page {
 	}
 
 
-
 	/**
 	 * @return array
 	 */
@@ -228,6 +227,9 @@ class Payments_Admin_Page extends EE_Admin_Page {
 		$payment_method_types = EE_Payment_Method_Manager::instance()->payment_method_types();
 		$all_pmt_help_tabs_config = array();
 		foreach( $payment_method_types as $payment_method_type ){
+			if ( ! EE_Registry::instance()->CAP->current_user_can( $payment_method_type->cap_name(), 'specific_payment_method_type_access' ) ) {
+				continue;
+			}
 			foreach( $payment_method_type->help_tabs_config() as $help_tab_name => $config ){
 				$all_pmt_help_tabs_config[$help_tab_name] = array(
 					'title'=>$config['title'],
@@ -288,6 +290,12 @@ class Payments_Admin_Page extends EE_Admin_Page {
 			if($pmt_obj instanceof EE_PMT_Admin_Only){
 				continue;
 			}
+
+			//check access
+			if ( ! EE_Registry::instance()->CAP->current_user_can( $pmt_obj->cap_name(), 'specific_payment_method_type_access' ) ) {
+				continue;
+			}
+
 			//check for any active pms of that type
 			$payment_method = EEM_Payment_Method::instance()->get_one_of_type($pmt_obj->system_name());
 			if( ! $payment_method ){
@@ -317,7 +325,7 @@ class Payments_Admin_Page extends EE_Admin_Page {
 			//if they provided the current payment method, use it
 			$payment_method_slug = sanitize_key($this->_req_data['payment_method']);
 			//double-check it exists
-			if( ! EEM_Payment_Method::instance()->get_one(array(array('PMD_slug'=>$payment_method_slug)))){
+			if( ! $payment_method = EEM_Payment_Method::instance()->get_one(array(array('PMD_slug'=>$payment_method_slug))) || ( $payment_method instanceof EE_Payment_Method && $payment_method->type_obj() instanceof EE_PMT_Base && ! EE_Registry::instance()->CAP->current_user_can( $payment_method->type_obj()->cap_name(), 'specific_payment_method_type_access' ) ) ){
 				$payment_method_slug = FALSE;
 			}
 		}else{
@@ -327,7 +335,7 @@ class Payments_Admin_Page extends EE_Admin_Page {
 		if( ! $payment_method_slug){
 			//otherwise, look for an active one
 			$an_active_pm = EEM_Payment_Method::instance()->get_one_active('CART');
-			if($an_active_pm){
+			if($an_active_pm && $an_active_pm->type_obj() instanceof EE_PMT_Base && EE_Registry::instance()->CAP->current_user_can($an_active_pm->type_obj()->cap_name(), 'specific_payment_method_type_access' ) ) {
 				$payment_method_slug = $an_active_pm->slug();
 			}else{
 				$payment_method_slug = 'paypal_standard';
@@ -384,7 +392,7 @@ class Payments_Admin_Page extends EE_Admin_Page {
 			'PMD_type',//dont want them changing the type
 			'PMD_order',//or the order, for now
 			'PMD_slug',//or the slug (probably never)
-			'PMD_wp_user_id',//or the user's ID
+			'PMD_wp_user',//or the user's ID
 			'Currency'//or the currency, until the rest of EE supports simultaneous currencies
 		));
 
@@ -398,42 +406,9 @@ class Payments_Admin_Page extends EE_Admin_Page {
 		if(isset($this->_req_data['payment_method_type'])){
 			$payment_method_type = sanitize_text_field($this->_req_data['payment_method_type']);
 			//see if one exists
-			$payment_method = EEM_Payment_Method::instance()->get_one_of_type($payment_method_type);
-			if( ! $payment_method){
-				global $current_user;
-				$pm_type_class = EE_Payment_Method_Manager::instance()->payment_method_class_from_type($payment_method_type);
-				if(class_exists($pm_type_class)){
-					/** @var $pm_type_obj EE_PMT_Base */
-					$pm_type_obj = new $pm_type_class;
-					$payment_method = EEM_Payment_Method::instance()->get_one_by_slug($pm_type_obj->system_name());
-					if( ! $payment_method){
-						$payment_method = EE_Payment_Method::new_instance(array(
-							'PMD_type'=>$pm_type_obj->system_name(),
-							'PMD_name'=>$pm_type_obj->pretty_name(),
-							'PMD_admin_name'=>$pm_type_obj->pretty_name(),
-							'PMD_slug'=>$pm_type_obj->system_name(),//automatically converted to slug
-							'PMD_wp_user_id'=>$current_user->ID
-						));
-					}
-					$payment_method->set_active();
-					$payment_method->set_description( $pm_type_obj->default_description() );
-					//handles the goofy case where someone activates the invoice gateway which is also
-					$payment_method->set_type($pm_type_obj->system_name());
-					$payment_method->save();
-					foreach($payment_method->get_all_usable_currencies() as $currency_obj){
-						$payment_method->_add_relation_to($currency_obj, 'Currency');
-					}
-					//now add setup its default extra meta properties
-					$extra_metas = $payment_method->type_obj()->settings_form()->extra_meta_inputs();
-					foreach( $extra_metas as $meta_name => $input ){
-						$payment_method->update_extra_meta($meta_name, $input->raw_value() );
-					}
-				}
+			EE_Registry::instance()->load_lib( 'Payment_Method_Manager' );
+			$payment_method = EE_Payment_Method_Manager::instance()->activate_a_payment_method_of_type( $payment_method_type );
 
-			}else{
-				$payment_method->set_active();
-				$payment_method->save();
-			}
 			$this->_redirect_after_action(1, 'Payment Method', 'activated', array('action' => 'default','payment_method'=>$payment_method->slug()));
 		}else{
 			$this->_redirect_after_action(FALSE, 'Payment Method', 'activated', array('action' => 'default'));

@@ -27,36 +27,7 @@ class EEM_Payment_Method extends EEM_Base {
 	 *
 	 * @type EEM_Payment_Method
 	 */
-	private static $_instance = NULL;
-
-
-
-	/**
-	 *        This function is a singleton method used to instantiate the EEM_Payment_Method object
-	 *
-	 * @access public
-	 * @return EEM_Payment_Method
-	 */
-	public static function instance() {
-		// check if instance of EEM_Checkin already exists
-		if ( self::$_instance === NULL ) {
-			// instantiate Price_model
-			self::$_instance = new self();
-		}
-		// EEM_Checkin object
-		return self::$_instance;
-	}
-
-
-
-	/**
-	 * Resets the instance
-	 * @return EEM_Payment_Method
-	 */
-	public static function reset() {
-		self::$_instance = NULL;
-		return self::instance();
-	}
+	protected static $_instance = NULL;
 
 
 
@@ -66,7 +37,7 @@ class EEM_Payment_Method extends EEM_Base {
 	 * @access   protected
 	 * @return EEM_Payment_Method
 	 */
-	protected function __construct() {
+	protected function __construct( $timezone = NULL ) {
 		$this->singlular_item = __( 'Payment Method', 'event_espresso' );
 		$this->plural_item = __( 'Payment Methods', 'event_espresso' );
 		$this->_tables = array( 'Payment_Method' => new EE_Primary_Table( 'esp_payment_method', 'PMD_ID' ) );
@@ -80,7 +51,7 @@ class EEM_Payment_Method extends EEM_Base {
 				'PMD_admin_desc' => new EE_Simple_HTML_Field( 'PMD_admin_desc', __( "Admin-Only Description", 'event_espresso' ), TRUE ),
 				'PMD_slug' => new EE_Slug_Field( 'PMD_slug', __( "Slug", 'event_espresso' ), FALSE ), 'PMD_order' => new EE_Integer_Field( 'PMD_order', __( "Order", 'event_espresso' ), FALSE, 0 ),
 				'PMD_debug_mode' => new EE_Boolean_Field( 'PMD_debug_mode', __( "Debug Mode On?", 'event_espresso' ), FALSE, FALSE ),
-				'PMD_wp_user_id' => new EE_Integer_Field( 'PMD_wp_user_id', __( "User ID", 'event_espresso' ), FALSE, 1 ),
+				'PMD_wp_user' => new EE_Integer_Field( 'PMD_wp_user', __( "User ID", 'event_espresso' ), FALSE, 1 ),
 				'PMD_open_by_default' => new EE_Boolean_Field( 'PMD_open_by_default', __( "Open by Default?", 'event_espresso' ), FALSE, FALSE ), 'PMD_button_url' => new EE_Plain_Text_Field( 'PMD_button_url', __( "Button URL", 'event_espresso' ), TRUE, '' ),
 				'PMD_scope' => new EE_Serialized_Text_Field( 'PMD_scope', __( "Usable From?", 'event_espresso' ), FALSE, array() ), //possible values currently are 'CART','ADMIN','API'
 		) );
@@ -89,7 +60,7 @@ class EEM_Payment_Method extends EEM_Base {
 			'Payment' => new EE_Has_Many_Relation(),
 			'Currency' => new EE_HABTM_Relation( 'Currency_Payment_Method' ),
 			'Transaction' => new EE_Has_Many_Relation(),);
-		parent::__construct();
+		parent::__construct( $timezone );
 	}
 
 
@@ -146,9 +117,31 @@ class EEM_Payment_Method extends EEM_Base {
 	 * @return EE_Payment_Method[]
 	 */
 	public function get_all_active( $scope = NULL, $query_params = array() ) {
+		return $this->get_all( $this->_get_query_params_for_all_active( $scope, $query_params ) );
+	}
+
+	/**
+	 * Counts all active gateways in the specified scope
+	 * @param string $scope one of EEM_Payment_Method::scope_*
+	 * @param array $query_params
+	 * @return int
+	 */
+	public function count_active( $scope = NULL, $query_params = array() ){
+		return $this->count( $this->_get_query_params_for_all_active( $scope, $query_params ) );
+	}
+
+	/**
+	 * Creates the $query_params that can be passed into any EEM_Payment_Method as their $query_params
+	 * argument to get all active for a given scope
+	 * @param string $scope one of the constants EEM_Payment_Method::scope_*
+	 * @param array $query_params like EEM_Base::get_all.
+	 * @return array like param of EEM_Base::get_all()
+	 * @throws EE_Error
+	 */
+	protected function _get_query_params_for_all_active( $scope = NULL, $query_params = array() ){
 		if ( $scope ) {
 			if ( $this->is_valid_scope( $scope ) ) {
-				return $this->get_all( array_replace_recursive( array( array( 'PMD_scope' => array( 'LIKE', "%$scope%" ) ) ), $query_params ) );
+				return array_replace_recursive( array( array( 'PMD_scope' => array( 'LIKE', "%$scope%" ) ) ), $query_params );
 			} else {
 				throw new EE_Error( sprintf( __( "'%s' is not a valid scope for a payment method", "event_espresso" ), $scope ) );
 			}
@@ -159,8 +152,7 @@ class EEM_Payment_Method extends EEM_Base {
 				$count++;
 				$acceptable_scopes[ 'PMD_scope*' . $count ] = array( 'LIKE', '%' . $scope_name . '%' );
 			}
-			$query_params = array_replace_recursive( array( array( 'OR*active_scope' => $acceptable_scopes ) ), $query_params );
-			return $this->get_all( $query_params );
+			return array_replace_recursive( array( array( 'OR*active_scope' => $acceptable_scopes ) ), $query_params );
 		}
 	}
 
@@ -173,12 +165,7 @@ class EEM_Payment_Method extends EEM_Base {
 	 * @return EE_Payment_Method
 	 */
 	public function get_one_active( $scope = NULL, $query_params = array() ) {
-		$results = $this->get_all_active( $scope, $query_params );
-		if ( $results ) {
-			return array_shift( $results );
-		} else {
-			return NULL;
-		}
+		return $this->get_one( $this->_get_query_params_for_all_active( $scope, $query_params ) );
 	}
 
 

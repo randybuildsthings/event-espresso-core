@@ -115,6 +115,42 @@ function ee_deprecated_get_templates( $templates, EE_messenger $messenger, EE_me
 }
 add_filter( 'FHEE__EE_Template_Pack___get_templates__templates', 'ee_deprecated_get_templates', 10, 4 );
 
+/**
+ * Called after EED_Module::set_hooks() and EED_Module::set_admin_hooks() was called.
+ * Checks if any deprecated hooks were hooked-into and provide doing_it_wrong messages appropriately.
+ */
+function ee_deprecated_hooks(){
+	/**
+	 * @var $hooks array where keys are hook names, and their values are array{
+	 *			@type string $version  when deprecated
+	 *			@type string $alternative  saying what to use instead
+	 *			@type boolean $still_works  whether or not the hook still works
+	 *		}
+	 */
+	$hooks = array(
+		'AHEE__EE_System___do_setup_validations' => array(
+			'version' => '4.6.0',
+			'alternative' => __( 'Instead use "AHEE__EEH_Activation__validate_messages_system" which is called after validating messages (done on every new install, upgrade, reactivation, and downgrade)', 'event_espresso' ),
+			'still_works' => FALSE
+		)
+	);
+	foreach( $hooks as $name => $deprecation_info ){
+		if( has_action( $name ) ){
+			EE_Error::doing_it_wrong(
+				$name,
+				sprintf(
+					__('This filter is deprecated. %1$s%2$s','event_espresso'),
+					$deprecation_info[ 'still_works' ] ?  __('It *may* work as an attempt to build in backwards compatibility.', 'event_espresso') : __( 'It has been completely removed.', 'event_espresso' ),
+					isset( $deprecation_info[ 'alternative' ] ) ? $deprecation_info[ 'alternative' ] : __( 'Please read the current EE4 documentation further or contact Support.', 'event_espresso' )
+				),
+				isset( $deprecation_info[ 'version' ] ) ? $deprecation_info[ 'version' ] : __( 'recently', 'event_espresso' )
+			);
+		}
+	}
+}
+add_action( 'AHEE__EE_System__set_hooks_for_shortcodes_modules_and_addons', 'ee_deprecated_hooks' );
+
+
 
 
 
@@ -289,3 +325,46 @@ class EE_Messages_Init extends EE_Base {
 
 
 } //end deprecated EE_Messages_Init
+
+
+/**
+ * Deprecated EE_Register_CPTs filters
+ */
+
+/**
+ * wrapper for deprecated 'FHEE__EE_Register_CPTs__construct__CPTs' filter.
+ *
+ * @deprecated 4.5.0
+ * @deprecated Use FHEE__EE_Register_CPTs__get_CPTs__cpts filter instead
+ *
+ * @param array $cpts The cpts being filtered
+ *
+ * @return array additional cpts.
+ */
+function ee_deprecated_get_cpts( $cpts ) {
+	if ( has_filter( 'FHEE__EE_Register_CPTs__construct__CPTs' ) ) {
+		EE_Error::doing_it_wrong( 'FHEE__EE_Register_CPTs__construct__CPTs', __('This filter is deprecated. It will still work for the time being.  However, it is recommended to use the new filter provided which is "FHEE__EE_Register_CPTs__get_CPTs__cpts" found in EE_Register_CPTs::get_CPTs()', 'event_espresso'), '4.5.0' );
+	}
+	return apply_filters( 'FHEE__EE_Register_CPTs__construct__CPTs', $cpts );
+}
+add_filter( 'FHEE__EE_Register_CPTs__get_CPTs__cpts', 'ee_deprecated_get_cpts', 10 );
+
+
+
+/**
+ * wrapper for deprecated 'FHEE__EE_Register_CPTs__construct__taxonomies' filter.
+ *
+ * @deprecated 4.5.0
+ * @deprecated Use FHEE__EE_Register_CPTs__get_taxonomies__taxonomies filter instead
+ *
+ * @param array $cts The custom taxonomies being filtered
+ *
+ * @return array additional custom taxonomies.
+ */
+function ee_deprecated_get_taxonomies( $cts ) {
+	if ( has_filter( 'FHEE__EE_Register_CPTs__construct__taxonomies' ) ) {
+		EE_Error::doing_it_wrong( 'FHEE__EE_Register_CPTs__construct__taxonomies', __('This filter is deprecated. It will still work for the time being.  However, it is recommended to use the new filter provided which is "FHEE__EE_Register_CPTs__get_taxonomies__taxonomies" found in EE_Register_CPTs::get_taxonomies()', 'event_espresso'), '4.5.0' );
+	}
+	return apply_filters( 'FHEE__EE_Register_CPTs__construct__taxonomies', $cts );
+}
+add_filter( 'FHEE__EE_Register_CPTs__get_taxonomies__taxonomies', 'ee_deprecated_get_taxonomies', 10 );
